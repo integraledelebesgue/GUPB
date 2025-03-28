@@ -1,5 +1,6 @@
 from gupb.controller import keyboard
 from gupb.controller import random
+from gupb.controller import roomba
 
 
 keyboard_controller = keyboard.KeyboardController()
@@ -14,6 +15,7 @@ CONFIGURATION = {
         random.RandomController("Bob"),
         random.RandomController("Cecilia"),
         random.RandomController("Darius"),
+        roomba.RoombaController("Roomba"),
     ],
     'start_balancing': False,
     'visualise': True,
