@@ -103,6 +103,7 @@ class SpriteRepository:
                     characters.Tabard.VIOLET,
                     characters.Tabard.WHITE,
                     characters.Tabard.YELLOW,
+                    characters.Tabard.RUSTLER
                 ],
                 [
                     characters.Facing.RIGHT,
