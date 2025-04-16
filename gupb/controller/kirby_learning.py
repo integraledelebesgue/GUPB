@@ -409,24 +409,24 @@ class KirbyLearningController(controller.Controller):
         arena = Arena.load(arena_description.name)
         self.terrain = arena.terrain
         K = 50
-        if game_no % K == 0 and game_no:
-            plt.plot(
-                [i for i, _ in enumerate(self.game_losses)],
-                [np.log(i) for i in self.game_losses],
-            )
-            plt.savefig(os.path.join("plots", f"all_rounds_{game_no}.png"))
-            plt.show()
-            plt.plot(
-                [i for i in range(len(self.scores))],
-                np.cumsum([i - 3 for i in self.scores]),
-                color="orange",
-            )
-            plt.show()
-            checkpoint = {
-                "model": self.net_A.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-            }
-            torch.save(checkpoint, os.path.join("weights", f"weights{game_no}.pth"))
+        # if game_no % K == 0 and game_no:
+            # plt.plot(
+            #     [i for i, _ in enumerate(self.game_losses)],
+            #     [np.log(i) for i in self.game_losses],
+            # )
+            # plt.savefig(os.path.join("plots", f"all_rounds_{game_no}.png"))
+            # plt.show()
+            # plt.plot(
+            #     [i for i in range(len(self.scores))],
+            #     np.cumsum([i - 3 for i in self.scores]),
+            #     color="orange",
+            # )
+            # plt.show()
+            # checkpoint = {
+            #     "model": self.net_A.state_dict(),
+            #     "optimizer": self.optimizer.state_dict(),
+            # }
+            # torch.save(checkpoint, os.path.join("./weights", f"weights{game_no}.pth"))
 
         self.map = torch.zeros(arena.size)
         self.seen = torch.zeros(arena.size)
