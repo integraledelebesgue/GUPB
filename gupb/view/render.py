@@ -75,7 +75,7 @@ class SpriteRepository:
             characters.Tabard.WHITE: load_sprite('characters', 'champion_white', BLACK),
             characters.Tabard.YELLOW: load_sprite('characters', 'champion_yellow', BLACK),
             characters.Tabard.KERAMZYTOWY_MOCARZ: load_sprite('characters', 'keramzytowy_mocarz', BLACK),
-            characters.Tabard.ROOMBA: load_sprite('characters', 'roomba', BLACK),
+            characters.Tabard.ROOMBA: load_sprite('characters', 'roomba', WHITE),
             characters.Tabard.PIRAT: load_sprite('characters', 'pirat', BLACK),
             characters.Tabard.MINION: load_sprite('characters', 'minion', None),
             characters.Tabard.RUSTLER: load_sprite('characters', 'champion_rustler', BLACK),
@@ -117,10 +117,10 @@ class SpriteRepository:
                     characters.Tabard.ROOMBA,
                     characters.Tabard.PIRAT,
                     characters.Tabard.MINION,
-                    characters.Tabard.RUSTLER
-                    characters.Tabard.GAREK
-                    characters.Tabard.REINFORCEDROGUE
-                    characters.Tabard.NORGUL
+                    characters.Tabard.RUSTLER,
+                    characters.Tabard.GAREK,
+                    characters.Tabard.REINFORCEDROGUE,
+                    characters.Tabard.NORGUL,
                     characters.Tabard.KIRBY,
                     characters.Tabard.KIMDZONGNEAT,
                     characters.Tabard.CAMPER,
