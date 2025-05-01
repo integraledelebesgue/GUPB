@@ -82,6 +82,8 @@ def get_attack_positions(position: Coords, weapon_name: str, facing: tuple) -> L
         "knife": weapons.Knife,
         "sword": weapons.Sword,
         "bow": weapons.Bow,
+        "bow_loaded": weapons.Bow,
+        "bow_unloaded": weapons.Bow,
         "axe": weapons.Axe,
         "amulet": weapons.Amulet,
         "scroll": weapons.Scroll,
