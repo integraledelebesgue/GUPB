@@ -196,8 +196,8 @@ class Rustler(controller.Controller):
             },
             "ARCHER_AGRESS": {
                 "better_weapons": [
-                    "loaded_bow",
-                    "unloaded_bow",
+                    "bow_loaded",
+                    "bow_unloaded",
                     "amulet",
                     "axe",
                     "sword",
@@ -205,11 +205,12 @@ class Rustler(controller.Controller):
                 "blacklisted_letters": ["M", "A", "S", "C"],
                 "auto_load_bow": True,
                 "bow_disables_aggro": False,
+                "aggression_turn_dst": 100,
             },
             "ARCHER": {
                 "better_weapons": [
-                    "loaded_bow",
-                    "unloaded_bow",
+                    "bow_loaded",
+                    "bow_unloaded",
                     "amulet",
                     "axe",
                     "sword",
@@ -251,14 +252,14 @@ class Rustler(controller.Controller):
             "NO_BLACKLIST": {"blacklisted_letters": [], "aggression_turn_dst": 1},
             "SWORD": {
                 "blacklisted_letters": ["B", "A", "M", "C"],
-                "better_weapons": ["sword", "amulet", "axe"],
+                "better_weapons": ["sword", "axe", "amulet"],
                 "aggression_turn_dst": 100,
                 "explore": True,
                 "menhir_ignore": False,
             },
             "AXE": {
                 "blacklisted_letters": ["B", "M", "S", "C"],
-                "better_weapons": ["axe", "amulet", "sword"],
+                "better_weapons": ["axe", "sword", "amulet"],
                 "aggression_turn_dst": 100,
                 "explore": True,
                 "menhir_ignore": False,
@@ -329,16 +330,20 @@ class Rustler(controller.Controller):
                 and self.prev_weapon is not None
                 and self.prev_weapon.name != "knife"
                 and self.prev_weapon.name != self.weapon.name
-                and self.weapon.name not in self.curr_params.better_weapons
                 and self.prev_weapon.name in self.curr_params.better_weapons
+                and (
+                    self.weapon.name not in self.curr_params.better_weapons
+                    or self.curr_params.better_weapons.index(self.prev_weapon.name)
+                    < self.curr_params.better_weapons.index(self.weapon.name)
+                )
             ):
                 self.curr_targets_set.add(
                     Goal("weapon", -1001, self.previous_position, True, None)
                 )
                 # ^ above if adds weapon goal when we accidently swapped good weapon for a bad one and moved on
                 # (remembers dropping it even if its not in knowledge.visible_tiles)
-
-            self.prev_weapon = self.weapon
+            if self.previous_position != knowledge.position:
+                self.prev_weapon = self.weapon
             self.previous_position = knowledge.position
             self.weapon = knowledge.visible_tiles[knowledge.position].character.weapon
 
@@ -347,7 +352,7 @@ class Rustler(controller.Controller):
                 self.charges = 5
             if self.weapon.name == "scroll" and self.charges == 0:
                 self.agress_turn_on_dst = 0
-            if self.curr_params.bow_disables_aggro and self.weapon == "bow":
+            if self.curr_params.bow_disables_aggro and self.weapon.name[0:3] == "bow":
                 self.agress_turn_on_dst = 0
             else:
                 self.agress_turn_on_dst = self.curr_params.aggression_turn_dst
@@ -515,13 +520,12 @@ class Rustler(controller.Controller):
             if not self.curr_params.ignore_possible_attack_opportunity and bool(
                 set(attack_coords) & set(possible_targets)
             ):
-                to_remove = []
-                for target in self.curr_targets_set:
-                    if target.name == "attack_position":
-                        to_remove.append(target)
-
-                for target in to_remove:
-                    self.curr_targets_set.remove(target)
+                to_remove = {
+                    target
+                    for target in self.curr_targets_set
+                    if target.name == "attack_position"
+                }
+                self.curr_targets_set.difference_update(to_remove)
 
                 if self.weapon.name == "scroll":
                     self.charges -= 1
@@ -546,12 +550,14 @@ class Rustler(controller.Controller):
                     and min_dist_to_champion < self.agress_turn_on_dst
                 ):
                     # closest_champion :characters.ChampionDescription = knowledge.visible_tiles[closest_chamption_coords].character
-                    self.add_killer_goals(knowledge, closest_chamption_coords, 100)
+                    self.add_killer_goals(
+                        knowledge, closest_chamption_coords, 100 - self.t / 100
+                    )
 
             curr_target: Goal = None
             if len(self.curr_targets_set) > 0:
                 curr_target = min(self.curr_targets_set)
-                # print("curr target:", curr_target.name, curr_target.journey_target, curr_target.facing)
+                # print("curr target:", curr_target.name, curr_target.priority, curr_target.journey_target, curr_target.facing)
 
                 path = self.path_finder.shortest_path(
                     knowledge.position.x,
@@ -568,13 +574,17 @@ class Rustler(controller.Controller):
                 if path is not None:
                     dst, target = path
 
-                    if dst <= curr_target.wandering:
-                        if curr_target.facing is not None:
-                            facing_action = self.determine_target_facing(
-                                knowledge.position, curr_target, [curr_target.facing]
-                            )
-                            if facing_action is not None:
-                                return facing_action
+                    if (
+                        dst <= curr_target.wandering
+                        and curr_target.facing is not None
+                        and self.facing != curr_target.facing
+                    ):
+                        facing_action = self.determine_target_facing(
+                            knowledge.position, curr_target
+                        )
+                        if facing_action is not None:
+                            return facing_action
+
                     target_facing = utils.str_to_facing(target)
                     next_position_on_the_journey = (
                         knowledge.position + utils.facing_to_cords(target_facing)
@@ -592,13 +602,21 @@ class Rustler(controller.Controller):
                             knowledge.position, curr_target, [target_facing]
                         )
                         # print("facing", facing_action)
-                        if self.curr_params.attack_when_in_path:
+                        if (
+                            self.curr_params.attack_when_in_path
+                            and next_position_on_the_journey_tile_description.type
+                            != "forest"
+                        ):
                             self.add_killer_goals(
-                                knowledge, next_position_on_the_journey, -5
+                                knowledge, next_position_on_the_journey, -5 - self.t / 100
                             )
                         else:
                             self.curr_targets_set.remove(curr_target)
-                        if self.weapon.name != "amulet" and facing_action is not None:
+                        if (
+                            self.weapon.name != "amulet"
+                            and facing_action is not None
+                            and self.facing != curr_target.facing
+                        ):
                             return facing_action
 
                     else:
@@ -615,7 +633,9 @@ class Rustler(controller.Controller):
                                 move = utils.move_right(self.facing)
                             if move is not None:
                                 return move
-        except Exception:
+
+            return characters.Action.TURN_RIGHT
+        except Exception as e:
             pass
 
         if self.weapon.name == "scroll":  # dont randomly use weapon when scroll
@@ -626,7 +646,7 @@ class Rustler(controller.Controller):
         self,
         knowledge: characters.ChampionKnowledge,
         cords_to_kill: coordinates.Coords,
-        priority: int = 100,
+        priority: float = 100,
     ) -> None:
         for attack_facing in [
             characters.Facing.UP,
@@ -661,7 +681,9 @@ class Rustler(controller.Controller):
                         priority + min_dst,
                         target,
                         True,
-                        attack_facing.opposite(),
+                        attack_facing.opposite()
+                        if self.weapon.name != "amulet"
+                        else None,
                     )
                 )
 
