@@ -1,5 +1,5 @@
 import random
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 import numpy as np
 
@@ -7,6 +7,7 @@ from gupb import controller
 from gupb.controller.rustler import utils
 from gupb.controller.rustler.goal import Goal
 from gupb.controller.rustler.pathfinder import PathFinder
+from gupb.controller.rustler.lpafinder import LPAFinder
 from gupb.controller.rustler.weapon_util import get_attack_positions
 from gupb.model import arenas, characters, coordinates, tiles, weapons
 
@@ -17,22 +18,21 @@ POSSIBLE_ACTIONS = [
     characters.Action.ATTACK,
 ]
 
+ARENA_SIZE_X = 30
+ARENA_SIZE_Y = 30
 
 class Hyperparams:
     def __init__(self, **kwargs):
         # Default values
         self.better_weapons: List[str] = kwargs.get(
-            "better_weapons", ["amulet", "axe", "sword"]
+            "better_weapons",
+            ["amulet", "axe", "sword", "bow_loaded", "bow_unloaded", "scroll"],
         )
         self.blacklisted_letters: List[str] = kwargs.get(
             "blacklisted_letters", ["B", "C"]
         )
         self.aggression_turn_dst: int = kwargs.get("aggression_turn_dst", 3)
-        self.special_hidden: coordinates.Coords | None = (
-            coordinates.Coords(*kwargs["special_hidden_spot"])
-            if kwargs.get("special_hidden_spot")
-            else None
-        )
+        self.mist_escape_limit: int = kwargs.get("mist_escape_limit", 15)
 
         # Boolean settings
         self.menhir_ignore: bool = kwargs.get("menhir_ignore", False)
@@ -42,7 +42,6 @@ class Hyperparams:
         )
         self.closest_hidden: bool = kwargs.get("closest_hidden", True)
         self.disable_hidden_spots: bool = kwargs.get("disable_hidden_spots", False)
-        self.go_to_weapon_first: bool = kwargs.get("go_to_weapon_first", True)
         self.ignore_weapon: bool = kwargs.get("ignore_weapon", False)
         self.true_random: bool = kwargs.get("true_random", False)
         self.ignore_potion: bool = kwargs.get("ignore_potion", False)
@@ -52,7 +51,10 @@ class Hyperparams:
         )  # randomize hidden spot when reached
         self.attack_when_in_path: bool = kwargs.get("attack_when_in_path", True)
         self.auto_load_bow: bool = kwargs.get("auto_load_bow", False)
-        self.mist_escape_limit: int = kwargs.get("mist_escape_limit", 5)
+        self.menhir_turns_off_exploration: bool = kwargs.get(
+            "menhir_turns_off_exploration", True
+        )
+        self.vanishing_forest: bool = kwargs.get("vanishing_forest", False)
 
 
 class ThompsonSampling:
@@ -127,12 +129,8 @@ class Rustler(controller.Controller):
 
     def __init__(self, first_name: str = "Rustler", **kwargs):
         self.first_name: str = first_name
-        HIDING_SPOTS = [(10, 10), (22, 2), (22, 14), (6, 22), (5, 5), (14, 4)]
-        self.HIDING_SPOTS: List[coordinates.Coords] = [
-            coordinates.Coords(x, y) for x, y in HIDING_SPOTS
-        ]
-
-        self.path_finder: PathFinder = PathFinder()
+        self.hiding_spots: Set[coordinates.Coords] = set()
+        self.path_finder: LPAFinder = LPAFinder(ARENA_SIZE_X, ARENA_SIZE_Y)
 
         self.menhir: coordinates.Coords | None = None
         self.mist: coordinates.Coords | None = None
@@ -142,7 +140,6 @@ class Rustler(controller.Controller):
         self.previous_position: coordinates.Coords | None = None
         self.curr_targets_set: Set[Goal] = set()
         self.charges: int = 5
-        self.in_fire: bool = False
         self.target_facings: List[str] = []
         self.spawned: bool = False
         self.thompson: ThompsonSampling | None = None
@@ -150,6 +147,10 @@ class Rustler(controller.Controller):
         self.curr_params: Hyperparams | None = None
         self.t: int = 0
         self.misted_set: Set[coordinates.Coords] = set()
+
+        self.tile_knowledge: Dict[
+            coordinates.Coords, Tuple[tiles.TileDescription, int]
+        ] = {}
 
         if not kwargs:
             pass
@@ -168,30 +169,21 @@ class Rustler(controller.Controller):
     def init_thompson_sampling(self, no_players: int):
         arms = {
             "FIRE": {
-                "blacklisted_letters": ["A", "M", "S", "B"],
+                "better_weapons": ["scroll", "sword", "axe", "amulet"],
                 "aggression_turn_dst": 100,
                 "explore": False,
             },
             "KILER_HUNTER": {
-                "blacklisted_letters": ["C", "B"],
                 "aggression_turn_dst": 100,
                 "explore": True,
+                "disable_hidden_spots": True,
             },
-            "KILER_BEST": {
-                "special_hidden": (22, 14),
-                "blacklisted_letters": ["C", "B"],
-                "aggression_turn_dst": 100,
-                "explore": False,
-            },
-            "KILER_CENTER": {
-                "special_hidden": (10, 10),
-                "blacklisted_letters": ["C", "B"],
+            "KILER": {
                 "aggression_turn_dst": 100,
                 "explore": False,
             },
             "NO_HIDE": {
                 "disable_hidden_spots": True,
-                "blacklisted_letters": ["C", "B"],
                 "aggression_turn_dst": 100,
             },
             "ARCHER_AGRESS": {
@@ -202,7 +194,6 @@ class Rustler(controller.Controller):
                     "axe",
                     "sword",
                 ],
-                "blacklisted_letters": ["M", "A", "S", "C"],
                 "auto_load_bow": True,
                 "bow_disables_aggro": False,
                 "aggression_turn_dst": 100,
@@ -215,51 +206,49 @@ class Rustler(controller.Controller):
                     "axe",
                     "sword",
                 ],
-                "blacklisted_letters": ["M", "A", "S", "C"],
                 "auto_load_bow": True,
                 "bow_disables_aggro": False,
             },
             "PASSIVE": {
-                "go_to_weapon_first": False,
                 "aggression_turn_dst": 0,
                 "menhir_ignore": True,
             },
             "CAMPER": {
-                "special_hidden": (22, 3),
                 "ignore_weapon": True,
-                "go_to_weapon_first": False,
                 "aggression_turn_dst": 1,
             },
             "CAMPER_NO_MENHIR": {
-                "special_hidden": (22, 3),
                 "ignore_weapon": True,
-                "go_to_weapon_first": False,
                 "aggression_turn_dst": 1,
                 "menhir_ignore": True,
             },
-            "NORMAL": {"blacklisted_letters": ["B", "C"], "aggression_turn_dst": 1},
+            "NORMAL": {"aggression_turn_dst": 1},
             "NORMAL_NO_MENHIR": {
-                "blacklisted_letters": ["B", "C"],
                 "aggression_turn_dst": 1,
                 "menhir_ignore": True,
             },
-            "NORMAL_NO_WEAPON_CORNER": {
-                "special_hidden": (4, 4),
-                "better_weapons": ["sword", "amulet"],
-                "go_to_weapon_first": False,
-                "aggression_turn_dst": 3,
-            },
-            "NO_BLACKLIST": {"blacklisted_letters": [], "aggression_turn_dst": 1},
             "SWORD": {
-                "blacklisted_letters": ["B", "A", "M", "C"],
-                "better_weapons": ["sword", "axe", "amulet"],
+                "better_weapons": [
+                    "sword",
+                    "axe",
+                    "amulet",
+                    "bow_loaded",
+                    "bow_unloaded",
+                    "scroll",
+                ],
                 "aggression_turn_dst": 100,
                 "explore": True,
                 "menhir_ignore": False,
             },
             "AXE": {
-                "blacklisted_letters": ["B", "M", "S", "C"],
-                "better_weapons": ["axe", "sword", "amulet"],
+                "better_weapons": [
+                    "axe",
+                    "sword",
+                    "amulet",
+                    "bow_loaded",
+                    "bow_unloaded",
+                    "scroll",
+                ],
                 "aggression_turn_dst": 100,
                 "explore": True,
                 "menhir_ignore": False,
@@ -270,31 +259,25 @@ class Rustler(controller.Controller):
         self.curr_thompson_name, self.curr_params = self.thompson.select_arm()
 
     def go_to_hidden_spot(self, knowledge: characters.ChampionKnowledge):
-        dst, cords = min(
-            [
-                (utils.norm(spot - knowledge.position), spot)
-                for spot in self.HIDING_SPOTS
-            ],
-            key=lambda x: x[0],
-        )
-        self.curr_targets_set.add(Goal("hide", 1000, cords, self.curr_params.explore))
-
-    def initial_find_weapon(self, knowledge):
-        self.weapon = knowledge.visible_tiles[knowledge.position].character.weapon
-        if self.weapon.name == "knife":
-            weapons_list = self.path_finder.letters_position(
-                knowledge.position.x,
-                knowledge.position.y,
-                self.curr_params.blacklisted_letters,
-            )
-            self.curr_targets_set.add(
-                Goal(
-                    "weapon",
-                    1,
-                    coordinates.Coords(weapons_list[0][0], weapons_list[0][1]),
-                    True,
+        to_remove = {target for target in self.curr_targets_set if target.name == "hide"}
+        self.curr_targets_set.difference_update(to_remove)
+        valid_spots = [
+            (utils.norm(spot - knowledge.position), spot)
+            for spot in self.hiding_spots
+            if (
+                self.tile_knowledge.get(spot)
+                and (
+                    spot == knowledge.position
+                    or self.tile_knowledge[spot][0].character is None
                 )
             )
+        ]
+        if not valid_spots:
+            return
+        dst, cords = min(valid_spots, key=lambda x: x[0])
+        self.curr_targets_set.add(
+            Goal("hide", 900, cords, self.curr_params.vanishing_forest)
+        )
 
     def decide(self, knowledge: characters.ChampionKnowledge) -> characters.Action:
         try:
@@ -304,27 +287,20 @@ class Rustler(controller.Controller):
             if self.curr_params.true_random:
                 return random.choice(POSSIBLE_ACTIONS)
 
-            # hidden spot init
-            if not self.spawned:
-                if self.curr_params.go_to_weapon_first:
-                    self.initial_find_weapon(knowledge)
-                self.spawned = True
-                if not self.curr_params.disable_hidden_spots:
-                    if self.curr_params.special_hidden:
-                        self.curr_targets_set.add(
-                            Goal(
-                                "hide",
-                                1000,
-                                self.curr_params.special_hidden,
-                                self.curr_params.explore,
-                            )
-                        )
-                    else:
-                        self.go_to_hidden_spot(knowledge)
-
             curr_tile = knowledge.visible_tiles[knowledge.position]
-
+            self.update_tile_knowledge(knowledge)
             self.facing = curr_tile.character.facing
+            # hiding spots
+            for tile_cords, knowledge_tile in knowledge.visible_tiles.items():
+                if knowledge_tile.type == "forest":
+                    self.hiding_spots.add(
+                        coordinates.Coords(tile_cords[0], tile_cords[1])
+                    )
+
+            if not self.curr_params.disable_hidden_spots:
+                if self.hiding_spots:
+                    self.go_to_hidden_spot(knowledge)
+            # weapons
             if (
                 not self.curr_params.ignore_weapon
                 and self.prev_weapon is not None
@@ -365,7 +341,7 @@ class Rustler(controller.Controller):
                         self.menhir = coordinates.Coords(key[0], key[1])
                         if self.mist is not None:
                             self.curr_targets_set.add(
-                                Goal("menhir", -1000, self.menhir, False, None, 2)
+                                Goal("menhir", -1000, self.menhir, False, wandering=3)
                             )
 
             # mist
@@ -377,7 +353,7 @@ class Rustler(controller.Controller):
                             self.mist = True
                             if self.menhir and not self.curr_params.menhir_ignore:
                                 self.curr_targets_set.add(
-                                    Goal("menhir", -1000, self.menhir, False, None, 2)
+                                    Goal("menhir", -1000, self.menhir, False, wandering=3)
                                 )
 
             if (
@@ -397,15 +373,16 @@ class Rustler(controller.Controller):
             ):
                 runaway_cords: coordinates.Coords = self.mist_escape_target(knowledge)
                 if runaway_cords is not None:
-                    self.curr_targets_set.add(Goal("mist", 0 - self.t, runaway_cords))
+                    if self.menhir is not None and not self.curr_params.menhir_ignore:
+                        self.curr_targets_set.add(Goal("mist", 500, runaway_cords))
+                    else:
+                        self.curr_targets_set.add(Goal("mist", 0 - self.t, runaway_cords))
 
             # potion and fire
             for key, tile in knowledge.visible_tiles.items():
                 fire_free = True
                 for effect in tile.effects:
                     if effect.type == "fire":
-                        if knowledge.position == key:
-                            self.in_fire = True
                         fire_free = False
                 if (
                     fire_free
@@ -416,7 +393,7 @@ class Rustler(controller.Controller):
                     self.curr_targets_set.add(
                         Goal(
                             "potion",
-                            500,
+                            190,
                             coordinates.Coords(key[0], key[1]),
                             True,
                             None,
@@ -429,16 +406,17 @@ class Rustler(controller.Controller):
                     (
                         cords[0],
                         cords[1],
-                        self.path_finder.shortest_path(
-                            knowledge.position.x,
-                            knowledge.position.y,
-                            cords[0],
-                            cords[1],
-                        )[0],
+                        shortest_path[0],  # Using the stored shortest path result
                         tile.loot,
                     )
                     for cords, tile in knowledge.visible_tiles.items()
-                    if tile.loot and tile.loot.name in self.curr_params.better_weapons
+                    if tile.loot
+                    and tile.loot.name in self.curr_params.better_weapons
+                    and (
+                        shortest_path := self.path_finder.shortest_path(
+                            knowledge.position.x, knowledge.position.y, cords[0], cords[1]
+                        )
+                    )  # Assigning shortest_path once
                 ]
 
                 if len(weapons_list) > 0:
@@ -497,17 +475,37 @@ class Rustler(controller.Controller):
                 self.curr_targets_set.remove(target)
 
             # if no goal and explore randomize goal
-            if self.curr_params.explore and len(self.curr_targets_set) == 0:
-                self.curr_targets_set.add(
-                    Goal("hide", 1000, random.choice(self.HIDING_SPOTS), True)
+            if (
+                self.curr_params.explore
+                and len(self.curr_targets_set) == 0
+                and not (self.menhir and self.curr_params.menhir_turns_off_exploration)
+            ):
+                reachable = self.path_finder.distances_from_start(
+                    knowledge.position.x, knowledge.position.y
                 )
+                reachable = {
+                    coordinates.Coords(x, y): dst
+                    for (x, y), dst in reachable.items()
+                    if coordinates.Coords(x, y) not in self.tile_knowledge
+                }
+                if len(reachable) > 0:
+                    x, y = min(reachable, key=reachable.get)
+                    self.curr_targets_set.add(
+                        Goal(
+                            "explore",
+                            1001,
+                            coordinates.Coords(x, y),
+                            True,
+                            None,
+                        )
+                    )
 
             # print('-' * 40)
             # print(self.first_name, knowledge.position, len(knowledge.visible_tiles), self.menhir, self.mist, self.weapon.name, len(self.curr_targets_set), self.facing, self.prev_weapon)
 
             # attack
             attack_coords: list[coordinates.Coords] = get_attack_positions(
-                knowledge.position, self.weapon.name, self.facing
+                knowledge.position, self.weapon.name, self.facing, self.tile_knowledge
             )
             possible_targets: list[coordinates.Coords] = [
                 coordinates.Coords(coords[0], coords[1])
@@ -554,10 +552,37 @@ class Rustler(controller.Controller):
                         knowledge, closest_chamption_coords, 100 - self.t / 100
                     )
 
-            curr_target: Goal = None
-            if len(self.curr_targets_set) > 0:
-                curr_target = min(self.curr_targets_set)
+            curr_target: Goal | None = min(self.curr_targets_set, default=None)
+            target_index = 0
+            iterations = 0
+            max_iterations = 10
+
+            while curr_target:
+                iterations += 1
+                if iterations > max_iterations:
+                    break
                 # print("curr target:", curr_target.name, curr_target.priority, curr_target.journey_target, curr_target.facing)
+                if (
+                    curr_target.name == "explore"
+                    and self.tile_knowledge.get(curr_target.journey_target) is not None
+                ):
+                    self.curr_targets_set.remove(curr_target)
+                    curr_target = min(self.curr_targets_set, default=None)
+                    continue
+
+                if curr_target.name == "menhir" and self.weapon.name != "scroll":
+                    tile_description, _ = self.tile_knowledge.get(
+                        curr_target.journey_target, (None, None)
+                    )
+                    if (
+                        tile_description.character is not None
+                        and curr_target.journey_target != knowledge.position
+                    ):
+                        self.add_killer_goals(
+                            knowledge, curr_target.journey_target, -10000
+                        )
+                        curr_target = min(self.curr_targets_set, default=None)
+                        continue
 
                 path = self.path_finder.shortest_path(
                     knowledge.position.x,
@@ -565,63 +590,78 @@ class Rustler(controller.Controller):
                     curr_target.journey_target.x,
                     curr_target.journey_target.y,
                 )
-                facing_action = self.determine_target_facing(
-                    knowledge.position, curr_target
-                )
-                if facing_action is not None:
-                    return facing_action
+
+                # print("PATH", path)
 
                 if path is not None:
                     dst, target = path
-
-                    if (
-                        dst <= curr_target.wandering
-                        and curr_target.facing is not None
-                        and self.facing != curr_target.facing
-                    ):
+                    # target: Facing = facing to go on path
+                    # self.facing: Facing = character facing
+                    # curr_target.facing: Facing = target facing
+                    if target == "STAY":
                         facing_action = self.determine_target_facing(
-                            knowledge.position, curr_target
+                            knowledge.position, curr_target, [curr_target.facing]
                         )
-                        if facing_action is not None:
+                        if (
+                            facing_action is not None
+                            and self.facing != curr_target.facing
+                        ):
                             return facing_action
 
-                    target_facing = utils.str_to_facing(target)
-                    next_position_on_the_journey = (
-                        knowledge.position + utils.facing_to_cords(target_facing)
-                    )
+                    if dst <= curr_target.wandering:
+                        target_index += 1
+                        curr_target = utils.quickselect(
+                            self.curr_targets_set, target_index
+                        )  # Returns the nth minimal element
+                        continue
 
+                    path_facing = utils.str_to_facing(target)
+                    next_position_on_the_journey = (
+                        knowledge.position + utils.facing_to_cords(path_facing)
+                    )
+                    facing_action = self.determine_target_facing(
+                        knowledge.position, curr_target, [path_facing]
+                    )
                     next_position_on_the_journey_tile_description: tiles.TileDescription = knowledge.visible_tiles.get(
                         next_position_on_the_journey
                     )
-                    # print("NEXT: ", knowledge.position, target_facing, next_position_on_the_journey, next_position_on_the_journey_tile_description)
+                    # print("NEXT: ", knowledge.position, path_facing, next_position_on_the_journey, next_position_on_the_journey_tile_description)
                     if (
                         next_position_on_the_journey_tile_description is not None
                         and next_position_on_the_journey_tile_description.character
                     ):
-                        facing_action = self.determine_target_facing(
-                            knowledge.position, curr_target, [target_facing]
-                        )
-                        # print("facing", facing_action)
                         if (
                             self.curr_params.attack_when_in_path
                             and next_position_on_the_journey_tile_description.type
                             != "forest"
                         ):
                             self.add_killer_goals(
-                                knowledge, next_position_on_the_journey, -5 - self.t / 100
+                                knowledge,
+                                next_position_on_the_journey,
+                                -100 - self.t / 100,
                             )
+                            if (
+                                self.weapon.name != "amulet"
+                                and facing_action is not None
+                                and self.facing != curr_target.facing
+                            ):
+                                return facing_action
+
+                            curr_target = min(self.curr_targets_set, default=None)
+                            continue
+
                         else:
-                            self.curr_targets_set.remove(curr_target)
-                        if (
-                            self.weapon.name != "amulet"
-                            and facing_action is not None
-                            and self.facing != curr_target.facing
-                        ):
-                            return facing_action
+                            if curr_target in self.curr_targets_set:
+                                self.curr_targets_set.remove(curr_target)
+                            else:
+                                pass  # TODO ???
 
                     else:
                         dst, target = path
-                        if dst != 0:
+                        if (
+                            dst != 0
+                            and utils.str_to_facing(target).opposite() != self.facing
+                        ):
                             move = None
                             if target == "UP":
                                 move = utils.move_up(self.facing)
@@ -634,6 +674,19 @@ class Rustler(controller.Controller):
                             if move is not None:
                                 return move
 
+                    facing_action = self.determine_target_facing(
+                        knowledge.position, curr_target, [path_facing]
+                    )
+                    if facing_action is not None and self.facing != curr_target.facing:
+                        return facing_action
+
+                else:
+                    target_index += 1
+                    curr_target = utils.quickselect(
+                        self.curr_targets_set, target_index
+                    )  # Returns the nth minimal element
+                    continue
+
             return characters.Action.TURN_RIGHT
         except Exception as e:
             pass
@@ -642,12 +695,62 @@ class Rustler(controller.Controller):
             return random.choice(POSSIBLE_ACTIONS[:-1])
         return random.choice(POSSIBLE_ACTIONS)
 
+    def update_tile_knowledge(self, knowledge: characters.ChampionKnowledge) -> None:
+        for tile_coords, tile_desc in knowledge.visible_tiles.items():
+            self.tile_knowledge[coordinates.Coords(tile_coords[0], tile_coords[1])] = (
+                tile_desc,
+                self.t,
+            )
+            if not utils.passable(tile_desc):
+                self.path_finder.update_cell(
+                    tile_coords[0], tile_coords[1], self.path_finder.INF
+                )
+            elif utils.misted(tile_desc) or utils.on_fire(tile_desc):
+                self.path_finder.update_cell(tile_coords[0], tile_coords[1], 9)
+            elif tile_desc.character is not None and tile_coords != knowledge.position:
+                facings = (
+                    [tile_desc.character.facing]
+                    if tile_desc.type != "forest"
+                    else [
+                        characters.Facing.UP,
+                        characters.Facing.DOWN,
+                        characters.Facing.LEFT,
+                        characters.Facing.RIGHT,
+                    ]
+                )
+                for attack_facing in facings:
+                    dangerous_cords = get_attack_positions(
+                        coordinates.Coords(tile_coords[0], tile_coords[1]),
+                        tile_desc.character.weapon.name,
+                        attack_facing,
+                        self.tile_knowledge,
+                    )
+                    for coords in dangerous_cords:
+                        if (
+                            coords[0] >= 0
+                            and coords[0] < ARENA_SIZE_X
+                            and coords[1] >= 0
+                            and coords[1] < ARENA_SIZE_Y
+                            and (
+                                self.tile_knowledge.get(coords, None) is None
+                                or self.tile_knowledge[coords][0].type != "forest"
+                            )
+                        ):
+                            self.path_finder.update_cell(
+                                coords[0],
+                                coords[1],
+                                (3 if tile_desc.type == "forest" else 2),
+                            )
+            else:
+                self.path_finder.update_cell(tile_coords[0], tile_coords[1], 1)
+
     def add_killer_goals(
         self,
         knowledge: characters.ChampionKnowledge,
         cords_to_kill: coordinates.Coords,
         priority: float = 100,
-    ) -> None:
+    ) -> int:
+        no_added_goals: int = 0
         for attack_facing in [
             characters.Facing.UP,
             characters.Facing.DOWN,
@@ -655,14 +758,25 @@ class Rustler(controller.Controller):
             characters.Facing.RIGHT,
         ]:
             closest_champion_attackable_coords: set[coordinates.Coords] = set(
-                get_attack_positions(cords_to_kill, self.weapon.name, attack_facing)
+                get_attack_positions(
+                    cords_to_kill, self.weapon.name, attack_facing, self.tile_knowledge
+                )
             )
             # ^ is a set of Cords that cords_to_kill can be attacked from
             if len(closest_champion_attackable_coords) == 0:
                 return
-            closest_champion_attackable_coords_free = []
-
+            closest_champion_attackable_coords_free: Tuple[int, coordinates.Coords] = []
             for coords in closest_champion_attackable_coords:
+                if not (
+                    coords[0] >= 0
+                    and coords[0] < ARENA_SIZE_X
+                    and coords[1] >= 0
+                    and coords[1] < ARENA_SIZE_Y
+                ) or (
+                    self.tile_knowledge.get(coords) is not None
+                    and self.tile_knowledge[coords][0].type == "forest"
+                ):
+                    continue
                 path = self.path_finder.shortest_path(
                     knowledge.position.x, knowledge.position.y, coords.x, coords.y
                 )
@@ -674,11 +788,10 @@ class Rustler(controller.Controller):
                 min_dst, target = min(
                     closest_champion_attackable_coords_free, key=lambda x: x[0]
                 )
-                # print("TARGETED", min_dst, target,attack_facing.opposite(), closest_champion_attackable_coords, closest_champion_attackable_coords_free)
                 self.curr_targets_set.add(
                     Goal(
                         "attack_position",
-                        priority + min_dst,
+                        priority + min_dst - self.t / 10,
                         target,
                         True,
                         attack_facing.opposite()
@@ -686,19 +799,20 @@ class Rustler(controller.Controller):
                         else None,
                     )
                 )
+                no_added_goals += 1
+
+        return no_added_goals
 
     def mist_escape_target(
         self, knowledge: characters.ChampionKnowledge
     ) -> coordinates.Coords:
         mist_escape_targets: list[coordinates.Coords] = []
-
-        for tile, tile_description in knowledge.visible_tiles.items():
-            if utils.passable(tile_description) and not utils.misted(tile_description):
-                path = self.path_finder.shortest_path(
-                    knowledge.position.x, knowledge.position.y, tile[0], tile[1]
-                )
-                if path is not None:
-                    mist_escape_targets.append(coordinates.Coords(tile[0], tile[1]))
+        mist_escape_targets = self.path_finder.distances_from_start(
+            knowledge.position.x, knowledge.position.y
+        )
+        mist_escape_targets = [
+            coordinates.Coords(x, y) for x, y in mist_escape_targets.keys()
+        ]
 
         best_distance = -1
         best_target = None
@@ -707,12 +821,7 @@ class Rustler(controller.Controller):
             min_distance = float("inf")
 
             for misted_coord in self.misted_set:
-                path = self.path_finder.shortest_path(
-                    target.x, target.y, misted_coord.x, misted_coord.y
-                )
-                if path is not None:
-                    distance, _ = path
-                    min_distance = min(min_distance, distance)
+                min_distance = min(min_distance, utils.norm(target - misted_coord))
 
             if min_distance > best_distance:
                 best_distance = min_distance
@@ -729,9 +838,9 @@ class Rustler(controller.Controller):
         if target_facing == []:
             self.target_facings = []
             if curr_target.journey_target.y - curr_position.y >= 0:
-                self.target_facings.append(characters.Facing.DOWN)
-            if curr_target.journey_target.y - curr_position.y <= 0:
                 self.target_facings.append(characters.Facing.UP)
+            if curr_target.journey_target.y - curr_position.y <= 0:
+                self.target_facings.append(characters.Facing.DOWN)
             if curr_target.journey_target.x - curr_position.x >= 0:
                 self.target_facings.append(characters.Facing.RIGHT)
             if curr_target.journey_target.x - curr_position.x <= 0:
@@ -744,13 +853,13 @@ class Rustler(controller.Controller):
         if self.facing == characters.Facing.UP:
             if characters.Facing.LEFT in self.target_facings:
                 return characters.Action.TURN_LEFT
-            elif characters.Facing.RIGHT in self.target_facings:
+            if characters.Facing.RIGHT in self.target_facings:
                 return characters.Action.TURN_RIGHT
 
         if self.facing == characters.Facing.DOWN:
             if characters.Facing.LEFT in self.target_facings:
                 return characters.Action.TURN_RIGHT
-            elif characters.Facing.RIGHT in self.target_facings:
+            if characters.Facing.RIGHT in self.target_facings:
                 return characters.Action.TURN_LEFT
 
         if self.facing == characters.Facing.LEFT:
@@ -781,13 +890,16 @@ class Rustler(controller.Controller):
         self.weapon = None
         self.curr_targets_set = set()
         self.charges = 5
-        self.in_fire = False
         self.target_facings = []
         self.spawned = False
         self.t = 0
         self.prev_weapon = None
         self.previous_position = None
         self.misted_set = set()
+
+        self.tile_knowledge = {}
+        self.path_finder = LPAFinder(ARENA_SIZE_X, ARENA_SIZE_Y)
+        self.hiding_spots = set()
 
     def register(self, key) -> None:
         pass
