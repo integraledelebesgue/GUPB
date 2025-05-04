@@ -2,7 +2,7 @@ from gupb.model import characters
 from gupb.model import coordinates
 
 class Goal:
-    def __init__(self, name: str, priority: int, target_cords: coordinates.Coords, vanishable: bool = False, facing :characters.Facing = None, wandering=1):
+    def __init__(self, name: str, priority: float, target_cords: coordinates.Coords, vanishable: bool = False, facing :characters.Facing = None, wandering: int = 0):
         self.name = name
         self.priority = priority
         self.journey_target = target_cords
