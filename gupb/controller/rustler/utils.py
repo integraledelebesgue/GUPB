@@ -1,7 +1,9 @@
+import random
 from typing import Set, List, Dict
 from gupb.model import characters
 from gupb.model import coordinates
 from gupb.model import tiles
+
 def norm(coords: coordinates.Coords) -> int:
     return abs(coords.x) + abs(coords.y)
 
@@ -11,11 +13,17 @@ def misted(tile_description: tiles.TileDescription) -> bool:
 def passable(tile_description: tiles.TileDescription) -> bool:
     return tile_description.type in ['land','forest','menhir']
 
+def transparent(tile_description: tiles.TileDescription) -> bool:
+    return tile_description.type in ['land','sea','menhir']
+
+def on_fire(tile_description: tiles.TileDescription) -> bool:
+    return sum([1 if effect.type == 'fire' else 0 for effect in tile_description.effects]) > 0
+
 def facing_to_cords(facing :characters.Facing) -> coordinates.Coords:
     if facing == characters.Facing.UP:
-        return coordinates.Coords(0, -1)
-    if facing == characters.Facing.DOWN:
         return coordinates.Coords(0, 1)
+    if facing == characters.Facing.DOWN:
+        return coordinates.Coords(0, -1)
     if facing == characters.Facing.RIGHT:
         return coordinates.Coords(1, 0)
     if facing == characters.Facing.LEFT:
@@ -41,6 +49,20 @@ def str_to_facing(str: str) -> characters.Facing:
     if str == 'RIGHT':
         return characters.Facing.RIGHT
     return characters.Facing.UP
+
+def quickselect(arr, n):
+    if not arr:
+        return None  # Handle empty set case
+    pivot = random.choice(list(arr))
+    left = {x for x in arr if x < pivot}
+    right = {x for x in arr if x > pivot}
+
+    if n < len(left):
+        return quickselect(left, n)
+    elif n == len(left):
+        return pivot
+    else:
+        return quickselect(right, n - len(left) - 1)
 
 def move_up(facing :characters.Facing) -> characters.Action:
     if facing == characters.Facing.UP:
