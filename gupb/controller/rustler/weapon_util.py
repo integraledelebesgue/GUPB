@@ -1,7 +1,7 @@
-from typing import List
+from typing import List, Tuple, Dict
 
-from gupb.model import coordinates
-from gupb.model import weapons
+from gupb.model import coordinates, weapons, tiles
+from gupb.controller.rustler.utils import transparent
 
 class Facing:
     # Here we simulate the Facing enum with associated coordinate values.
@@ -63,10 +63,28 @@ class DummyTerrain(dict):
         # Every cell is transparent.
         return DummyCell()
 
-# -----------------------------------------------------------------------------
-# The function to compute attack positions
+class TileKnowledgeTerrain:
+    """
+    A terrain interface built from a tile_knowledge dict where:
+      • Each key is a Coords and its value is a tuple (TileDescription, int).
+      • When retrieving a cell, if the coordinate is known, we use its TileDescription
+        to determine if the cell is transparent. Otherwise, the cell defaults to being transparent.
+    """
+    def __init__(self, tile_knowledge: Dict[coordinates.Coords, Tuple[tiles.TileDescription, int]]):
+        self.tile_knowledge = tile_knowledge
 
-def get_attack_positions(position: Coords, weapon_name: str, facing: tuple) -> List[Coords]:
+    def __contains__(self, key: Coords) -> bool:
+        return key[0] >= 0 and key[1] >= 0
+
+    def __getitem__(self, key: Coords):
+        if key in self.tile_knowledge:
+            tile_desc, _ = self.tile_knowledge[key]
+            return DummyCell(transparent=transparent(tile_desc))
+        else:
+            # For unknown coordinates, assume an open (transparent) terrain
+            return DummyCell(transparent=True)
+
+def get_attack_positions_with_dummy(position: Coords, weapon_name: str, facing: Facing, terrain = DummyTerrain()) -> List[Tuple[int, int]]:
     """
     Returns a list of coordinates that can be attacked given a starting position,
     a weapon (by name) and a facing direction.
@@ -74,14 +92,15 @@ def get_attack_positions(position: Coords, weapon_name: str, facing: tuple) -> L
     Parameters:
       • position: The starting Coords.
       • weapon_name: A string representing the weapon ("knife", "sword", "bow", "axe", "amulet", "scroll").
-      • facing: A tuple representing the direction (e.g. Facing.UP, Facing.DOWN, etc.)
-                In your code, this would be characters.Facing.
+      • facing: Direction (e.g. Facing.UP, Facing.DOWN, etc.) which should be characters.Facing.
     """
     # Map weapon names (in lowercase) to the corresponding classes.
     weapon_mapping = {
         "knife": weapons.Knife,
         "sword": weapons.Sword,
         "bow": weapons.Bow,
+        "bow_loaded": weapons.Bow,
+        "bow_unloaded": weapons.Bow,
         "axe": weapons.Axe,
         "amulet": weapons.Amulet,
         "scroll": weapons.Scroll,
@@ -92,9 +111,33 @@ def get_attack_positions(position: Coords, weapon_name: str, facing: tuple) -> L
     if weapon_class is None:
         return []
 
-    # Create a dummy terrain which simulates an open field.
-    terrain = DummyTerrain()
-
     # Call the class method cut_positions. It takes (terrain, position, facing)
     return weapon_class.cut_positions(terrain, position, facing)
+
+# -----------------------------------------------------------------------------
+# The function to compute attack positions using tile_knowledge
+
+def get_attack_positions(
+    position: Coords,
+    weapon_name: str,
+    facing: Facing,
+    tile_knowledge: Dict[coordinates.Coords, Tuple[tiles.TileDescription, int]]
+) -> List[Tuple[int, int]]:
+    """
+    Returns a list of coordinates that can be attacked given a starting position,
+    a weapon (by name) and a facing direction. Instead of a pre-built terrain, this
+    version constructs terrain on the fly from tile_knowledge.
+
+    Parameters:
+      • position: The starting position.
+      • weapon_name: A string representing the weapon ("knife", "sword", "bow", "axe", "amulet", "scroll").
+      • facing: A tuple representing the direction (e.g. Facing.UP, Facing.DOWN, etc.)
+      • tile_knowledge: A dict with keys as Coords and values as (TileDescription, int),
+                        where transparency is determined by the TileDescription.
+    """
+        # Create a terrain object based on the provided tile knowledge.
+    terrain = TileKnowledgeTerrain(tile_knowledge)
+
+    # Delegate to the weapon's cut_positions method, which uses the terrain.
+    return get_attack_positions_with_dummy(position, weapon_name, facing, terrain)
 
