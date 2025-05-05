@@ -1,9 +1,7 @@
-from typing import Tuple, Dict
-
 class PriorityQueue:
     def __init__(self):
         self.heap = []   # List of entries, each is [key, vertex]
-        self.pos = {}    # Dictionary: vertex -> index in heap
+        self.pos = {}    # dictionary: vertex -> index in heap
 
     def push(self, key, vertex):
         # If already present, decrease the key if new key is better
@@ -72,19 +70,19 @@ class PriorityQueue:
 class LPAFinder:
     def __init__(self, width, height):
         """
-        Initialize the grid with dimensions (width x height). 
-        By default, every cell has cost 1 (passable). 
+        Initialize the grid with dimensions (width x height).
+        By default, every cell has cost 1 (passable).
         The maze is represented as a 2D grid (list of lists) in self.matrix.
         """
         self.width = width
-        self.height = height  
-        
+        self.height = height
+
         # LPA* specific variables:
         self.INF = float('inf')
         # For each cell, keep the best cost found so far (g) and one-step lookahead (rhs)
         self.g = {}    # g(s) for each cell s
         self.rhs = {}  # rhs(s) for each cell s
-        
+
         self.U = PriorityQueue()    # Use the custom priority queue
         self.s_start = None  # start cell (x, y)
         self.s_goal = None   # goal cell (x, y)
@@ -100,13 +98,13 @@ class LPAFinder:
         print()
 
     ### --- Heuristic and Key Functions --- ###
-    
+
     def heuristic(self, s):
         if self.s_goal is None:
             return 0
         """Use Manhattan distance from cell s to s_goal as the heuristic."""
         return abs(s[0] - self.s_goal[0]) + abs(s[1] - self.s_goal[1])
-    
+
     def key(self, s):
         """
         The key for a cell s is a tuple:
@@ -116,9 +114,9 @@ class LPAFinder:
         rhs_val = self.rhs.get(s, self.INF)
         min_val = min(g_val, rhs_val)
         return (min_val + self.heuristic(s), min_val)
-    
+
     ### --- Neighbors and Cost Helper Functions --- ###
-    
+
     def get_neighbors(self, s):
         """Return all valid neighbors (up, down, left, right) for cell s."""
         x, y = s
@@ -131,13 +129,13 @@ class LPAFinder:
 
     def cost(self, u, v):
         """
-        The cost of moving from cell u to v is defined as the cost of the 
+        The cost of moving from cell u to v is defined as the cost of the
         destination cell v, i.e. self.matrix[v[1]][v[0]].
         """
         return self.matrix[v[1]][v[0]]
-    
+
     ### --- LPA* Initialization and Update Methods --- ###
-    
+
     def initialize(self):
         """
         (Re)initialize LPA* state for all grid cells.
@@ -155,7 +153,7 @@ class LPAFinder:
         self.rhs[self.s_start] = 0
         self.U = PriorityQueue()
         self.U.push(self.key(self.s_start), self.s_start)
-        
+
     def ensure_cell_exists(self, cell):
         if cell not in self.g:
             self.g[cell] = self.INF
@@ -192,7 +190,7 @@ class LPAFinder:
         """
         The core loop of LPA*. Remove inconsistent vertices from U and update them,
         until s_goal is locally consistent AND the best key in U is not less than the key of s_goal.
-        
+
         An optional max_iterations parameter serves as a safeguard to prevent infinite loops.
         """
         if max_iterations is None:
@@ -210,7 +208,7 @@ class LPAFinder:
                 self.update_vertex(u)
                 for s in self.get_neighbors(u):
                     self.update_vertex(s)
-        
+
         ### --- Path Reconstruction --- ###
 
     def reconstruct_path(self):
@@ -254,17 +252,17 @@ class LPAFinder:
 
         path.reverse()
         return path
-    
+
     ### --- Public Interface Methods --- ###
 
     def shortest_path(self, Xx, Xy, Yx, Yy):
         """
         Compute the shortest path from (Xx, Xy) [start] to (Yx, Yy) [goal]
         using the dynamic LPA* algorithm.
-        
+
         This method keeps the same signature as before.
         Returns a tuple: (total_cost, first_move) where first_move is one of:
-        "UP", "DOWN", "LEFT", "RIGHT", or "STAY". 
+        "UP", "DOWN", "LEFT", "RIGHT", or "STAY".
         If no path is found, (None is returned.)
         """
         new_start = (Xx, Xy)
@@ -299,7 +297,7 @@ class LPAFinder:
         else:
             direction = "STAY"
         return (self.g[self.s_goal], direction)
-    
+
     def update_cell(self, x, y, new_value):
         """
         Update the cost of cell (x, y) to new_value.
@@ -307,7 +305,7 @@ class LPAFinder:
             • 1  → passable with low cost.
             • >1 → passable but with a higher cost.
             • 100 → very high cost (effectively a wall).
-            
+
         After updating, only affected vertices (the cell itself and its neighbors)
         are re-evaluated via update_vertex(), and then compute_shortest_path() is called
         so that only the necessary parts of the search tree are repaired.
@@ -327,21 +325,21 @@ class LPAFinder:
         self.compute_shortest_path()
 
 
-    def distances_from_start(self, X, Y) -> Dict[Tuple[int, int], float]:
+    def distances_from_start(self, X, Y) -> dict[tuple[int, int], float]:
         """
         Compute the shortest distances from the given start node (X, Y)
         to every reachable cell in the grid.
-        
+
         This method reinitializes the LPA* state using (X, Y) as the start,
         then processes the entire queue (instead of stopping with a specific goal)
         so that every achievable node in the grid is relaxed.
-        
+
         Returns a dictionary mapping each cell (x, y) that is reachable (g < INF)
         to its computed distance (g-value).
         """
         # Set the given start.
         self.s_start = (X, Y)
-        
+
         # Reinitialize g and rhs for every cell.
         self.g = {}
         self.rhs = {}
@@ -351,13 +349,13 @@ class LPAFinder:
                 self.rhs[(x, y)] = self.INF
         # The start node has a rhs of 0.
         self.rhs[self.s_start] = 0
-        
+
         # Initialize the priority queue.
         # (You can use your custom PriorityQueue with decrease-key, or the lazy one.)
         # Here we assume that self.U is a PriorityQueue that supports push/pop.
         self.U = PriorityQueue()
         self.U.push(self.key(self.s_start), self.s_start)
-        
+
         # Process until the queue is empty.
         while self.U.peek() is not None:
             k_old, u = self.U.pop()
@@ -370,7 +368,7 @@ class LPAFinder:
                 self.update_vertex(u)
                 for s in self.get_neighbors(u):
                     self.update_vertex(s)
-        
+
         # Build up the dictionary of reachable distances.
         reachable = {}
         for y in range(self.height):
