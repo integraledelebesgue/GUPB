@@ -177,6 +177,7 @@ class Rustler(controller.Controller):
                 "aggression_turn_dst": 100,
                 "explore": True,
                 "disable_hidden_spots": True,
+                "menhir_turns_off_exploration": False
             },
             "KILER": {
                 "aggression_turn_dst": 100,
@@ -239,6 +240,8 @@ class Rustler(controller.Controller):
                 "aggression_turn_dst": 100,
                 "explore": True,
                 "menhir_ignore": False,
+                "disable_hidden_spots": True,
+                "menhir_turns_off_exploration": False
             },
             "AXE": {
                 "better_weapons": [
@@ -341,7 +344,7 @@ class Rustler(controller.Controller):
                         self.menhir = coordinates.Coords(key[0], key[1])
                         if self.mist is not None:
                             self.curr_targets_set.add(
-                                Goal("menhir", -1000, self.menhir, False, wandering=3)
+                                Goal("menhir", -1000, self.menhir, False, wandering=0)
                             )
 
             # mist
@@ -353,7 +356,7 @@ class Rustler(controller.Controller):
                             self.mist = True
                             if self.menhir and not self.curr_params.menhir_ignore:
                                 self.curr_targets_set.add(
-                                    Goal("menhir", -1000, self.menhir, False, wandering=3)
+                                    Goal("menhir", -1000, self.menhir, False, wandering=0)
                                 )
 
             if (
@@ -393,7 +396,7 @@ class Rustler(controller.Controller):
                     self.curr_targets_set.add(
                         Goal(
                             "potion",
-                            190,
+                            190 - self.t / 100,
                             coordinates.Coords(key[0], key[1]),
                             True,
                             None,
@@ -473,7 +476,6 @@ class Rustler(controller.Controller):
 
             for target in to_remove:
                 self.curr_targets_set.remove(target)
-
             # if no goal and explore randomize goal
             if (
                 self.curr_params.explore
@@ -499,10 +501,6 @@ class Rustler(controller.Controller):
                             None,
                         )
                     )
-
-            # print('-' * 40)
-            # print(self.first_name, knowledge.position, len(knowledge.visible_tiles), self.menhir, self.mist, self.weapon.name, len(self.curr_targets_set), self.facing, self.prev_weapon)
-
             # attack
             attack_coords: list[coordinates.Coords] = get_attack_positions(
                 knowledge.position, self.weapon.name, self.facing, self.tile_knowledge
@@ -533,7 +531,6 @@ class Rustler(controller.Controller):
                 not self.curr_params.ignore_possible_attack_opportunity
                 and len(possible_targets) > 0
             ):
-                # print("targets:", possible_targets)
                 targets_distance: list[int, coordinates.Coords] = [
                     (utils.norm(coords - knowledge.position), coords)
                     for coords in possible_targets
@@ -541,7 +538,6 @@ class Rustler(controller.Controller):
                 min_dist_to_champion, closest_chamption_coords = min(
                     targets_distance, key=lambda x: x[0]
                 )
-                # print("MIN DIST", min_dist_to_champion, closest_chamption_coords)
 
                 if (
                     min_dist_to_champion is not None
@@ -549,13 +545,13 @@ class Rustler(controller.Controller):
                 ):
                     # closest_champion :characters.ChampionDescription = knowledge.visible_tiles[closest_chamption_coords].character
                     self.add_killer_goals(
-                        knowledge, closest_chamption_coords, 100 - self.t / 100
+                        knowledge, closest_chamption_coords, 100 - self.t / 10
                     )
 
             curr_target: Goal | None = min(self.curr_targets_set, default=None)
-            target_index = 0
-            iterations = 0
-            max_iterations = 10
+            target_index: int = 0
+            iterations: int = 0
+            max_iterations: int = 10
 
             while curr_target:
                 iterations += 1
@@ -579,10 +575,17 @@ class Rustler(controller.Controller):
                         and curr_target.journey_target != knowledge.position
                     ):
                         self.add_killer_goals(
-                            knowledge, curr_target.journey_target, -10000
+                            knowledge, curr_target.journey_target, -10000 - self.t
                         )
                         curr_target = min(self.curr_targets_set, default=None)
                         continue
+
+                if curr_target.name == "attack_position" and self.weapon.name == "scroll" and self.charges == 0:
+                    target_index += 1
+                    curr_target = utils.quickselect(
+                        self.curr_targets_set, target_index
+                    )
+                    continue
 
                 path = self.path_finder.shortest_path(
                     knowledge.position.x,
@@ -638,7 +641,7 @@ class Rustler(controller.Controller):
                             self.add_killer_goals(
                                 knowledge,
                                 next_position_on_the_journey,
-                                -100 - self.t / 100,
+                                -100 - self.t / 10,
                             )
                             if (
                                 self.weapon.name != "amulet"
@@ -653,6 +656,7 @@ class Rustler(controller.Controller):
                         else:
                             if curr_target in self.curr_targets_set:
                                 self.curr_targets_set.remove(curr_target)
+                                # TODO: add goal to run away ???
                             else:
                                 pass  # TODO ???
 
@@ -687,7 +691,8 @@ class Rustler(controller.Controller):
                     )  # Returns the nth minimal element
                     continue
 
-            return characters.Action.TURN_RIGHT
+                break
+            return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
         except Exception as e:
             pass
 
@@ -733,7 +738,7 @@ class Rustler(controller.Controller):
                             and coords[1] < ARENA_SIZE_Y
                             and (
                                 self.tile_knowledge.get(coords, None) is None
-                                or self.tile_knowledge[coords][0].type != "forest"
+                                or self.tile_knowledge[coords][0].type not in ["forest", "wall", "sea"]
                             )
                         ):
                             self.path_finder.update_cell(
@@ -751,21 +756,21 @@ class Rustler(controller.Controller):
         priority: float = 100,
     ) -> int:
         no_added_goals: int = 0
-        for attack_facing in [
+        for attack_facing in ([
             characters.Facing.UP,
             characters.Facing.DOWN,
             characters.Facing.LEFT,
             characters.Facing.RIGHT,
-        ]:
-            closest_champion_attackable_coords: set[coordinates.Coords] = set(
+        ] if self.weapon.name != 'amulet' else [characters.Facing.UP]):
+            closest_champion_attackable_coords: Set[coordinates.Coords] = set(
                 get_attack_positions(
                     cords_to_kill, self.weapon.name, attack_facing, self.tile_knowledge
                 )
             )
             # ^ is a set of Cords that cords_to_kill can be attacked from
-            if len(closest_champion_attackable_coords) == 0:
+            if not closest_champion_attackable_coords:
                 return
-            closest_champion_attackable_coords_free: Tuple[int, coordinates.Coords] = []
+            closest_champion_attackable_coords_free: Tuple[int, coordinates.Coords] = None
             for coords in closest_champion_attackable_coords:
                 if not (
                     coords[0] >= 0
@@ -782,16 +787,15 @@ class Rustler(controller.Controller):
                 )
                 if path is not None:
                     dst, _ = path
-                    closest_champion_attackable_coords_free.append((dst, coords))
+                    if closest_champion_attackable_coords_free is None or dst < closest_champion_attackable_coords_free[0]:
+                        closest_champion_attackable_coords_free = (dst, coords)
 
-            if len(closest_champion_attackable_coords_free) > 0:
-                min_dst, target = min(
-                    closest_champion_attackable_coords_free, key=lambda x: x[0]
-                )
+            if closest_champion_attackable_coords_free is not None:
+                dst, target = closest_champion_attackable_coords_free
                 self.curr_targets_set.add(
                     Goal(
                         "attack_position",
-                        priority + min_dst - self.t / 10,
+                        priority + dst / 100,
                         target,
                         True,
                         attack_facing.opposite()
@@ -855,24 +859,32 @@ class Rustler(controller.Controller):
                 return characters.Action.TURN_LEFT
             if characters.Facing.RIGHT in self.target_facings:
                 return characters.Action.TURN_RIGHT
+            if characters.Facing.DOWN in self.target_facings:
+                return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
 
         if self.facing == characters.Facing.DOWN:
             if characters.Facing.LEFT in self.target_facings:
                 return characters.Action.TURN_RIGHT
             if characters.Facing.RIGHT in self.target_facings:
                 return characters.Action.TURN_LEFT
+            if characters.Facing.UP in self.target_facings:
+                return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
 
         if self.facing == characters.Facing.LEFT:
             if characters.Facing.UP in self.target_facings:
                 return characters.Action.TURN_RIGHT
             if characters.Facing.DOWN in self.target_facings:
                 return characters.Action.TURN_LEFT
+            if characters.Facing.RIGHT in self.target_facings:
+                return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
 
         if self.facing == characters.Facing.RIGHT:
             if characters.Facing.UP in self.target_facings:
                 return characters.Action.TURN_LEFT
             if characters.Facing.DOWN in self.target_facings:
                 return characters.Action.TURN_RIGHT
+            if characters.Facing.LEFT in self.target_facings:
+                return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
         return None
 
     def praise(self, score: int) -> None:

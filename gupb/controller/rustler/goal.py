@@ -15,12 +15,15 @@ class Goal:
             return (
                 self.name == other.name and 
                 self.priority == other.priority and 
-                self.journey_target == other.journey_target
+                self.journey_target == other.journey_target and
+                self.vanishable == other.vanishable and
+                self.facing == other.facing and
+                self.wandering == other.wandering
             )
         return False
 
     def __hash__(self):
-        return hash((self.name, self.priority, self.journey_target))
+        return hash((self.name, self.priority, self.journey_target, self.vanishable, self.facing, self.wandering))
 
     def __lt__(self, other):
         return self.priority < other.priority
