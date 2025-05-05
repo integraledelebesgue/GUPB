@@ -177,7 +177,7 @@ class Rustler(controller.Controller):
                 "aggression_turn_dst": 100,
                 "explore": True,
                 "disable_hidden_spots": True,
-                "menhir_turns_off_exploration": False
+                "menhir_turns_off_exploration": False,
             },
             "KILER": {
                 "aggression_turn_dst": 100,
@@ -241,7 +241,7 @@ class Rustler(controller.Controller):
                 "explore": True,
                 "menhir_ignore": False,
                 "disable_hidden_spots": True,
-                "menhir_turns_off_exploration": False
+                "menhir_turns_off_exploration": False,
             },
             "AXE": {
                 "better_weapons": [
@@ -580,11 +580,13 @@ class Rustler(controller.Controller):
                         curr_target = min(self.curr_targets_set, default=None)
                         continue
 
-                if curr_target.name == "attack_position" and self.weapon.name == "scroll" and self.charges == 0:
+                if (
+                    curr_target.name == "attack_position"
+                    and self.weapon.name == "scroll"
+                    and self.charges == 0
+                ):
                     target_index += 1
-                    curr_target = utils.quickselect(
-                        self.curr_targets_set, target_index
-                    )
+                    curr_target = utils.quickselect(self.curr_targets_set, target_index)
                     continue
 
                 path = self.path_finder.shortest_path(
@@ -692,7 +694,9 @@ class Rustler(controller.Controller):
                     continue
 
                 break
-            return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
+            return random.choice(
+                [characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT]
+            )
         except Exception as e:
             pass
 
@@ -738,7 +742,8 @@ class Rustler(controller.Controller):
                             and coords[1] < ARENA_SIZE_Y
                             and (
                                 self.tile_knowledge.get(coords, None) is None
-                                or self.tile_knowledge[coords][0].type not in ["forest", "wall", "sea"]
+                                or self.tile_knowledge[coords][0].type
+                                not in ["forest", "wall", "sea"]
                             )
                         ):
                             self.path_finder.update_cell(
@@ -756,12 +761,16 @@ class Rustler(controller.Controller):
         priority: float = 100,
     ) -> int:
         no_added_goals: int = 0
-        for attack_facing in ([
-            characters.Facing.UP,
-            characters.Facing.DOWN,
-            characters.Facing.LEFT,
-            characters.Facing.RIGHT,
-        ] if self.weapon.name != 'amulet' else [characters.Facing.UP]):
+        for attack_facing in (
+            [
+                characters.Facing.UP,
+                characters.Facing.DOWN,
+                characters.Facing.LEFT,
+                characters.Facing.RIGHT,
+            ]
+            if self.weapon.name != "amulet"
+            else [characters.Facing.UP]
+        ):
             closest_champion_attackable_coords: Set[coordinates.Coords] = set(
                 get_attack_positions(
                     cords_to_kill, self.weapon.name, attack_facing, self.tile_knowledge
@@ -787,7 +796,10 @@ class Rustler(controller.Controller):
                 )
                 if path is not None:
                     dst, _ = path
-                    if closest_champion_attackable_coords_free is None or dst < closest_champion_attackable_coords_free[0]:
+                    if (
+                        closest_champion_attackable_coords_free is None
+                        or dst < closest_champion_attackable_coords_free[0]
+                    ):
                         closest_champion_attackable_coords_free = (dst, coords)
 
             if closest_champion_attackable_coords_free is not None:
@@ -860,7 +872,9 @@ class Rustler(controller.Controller):
             if characters.Facing.RIGHT in self.target_facings:
                 return characters.Action.TURN_RIGHT
             if characters.Facing.DOWN in self.target_facings:
-                return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
+                return random.choice(
+                    [characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT]
+                )
 
         if self.facing == characters.Facing.DOWN:
             if characters.Facing.LEFT in self.target_facings:
@@ -868,7 +882,9 @@ class Rustler(controller.Controller):
             if characters.Facing.RIGHT in self.target_facings:
                 return characters.Action.TURN_LEFT
             if characters.Facing.UP in self.target_facings:
-                return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
+                return random.choice(
+                    [characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT]
+                )
 
         if self.facing == characters.Facing.LEFT:
             if characters.Facing.UP in self.target_facings:
@@ -876,7 +892,9 @@ class Rustler(controller.Controller):
             if characters.Facing.DOWN in self.target_facings:
                 return characters.Action.TURN_LEFT
             if characters.Facing.RIGHT in self.target_facings:
-                return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
+                return random.choice(
+                    [characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT]
+                )
 
         if self.facing == characters.Facing.RIGHT:
             if characters.Facing.UP in self.target_facings:
@@ -884,7 +902,9 @@ class Rustler(controller.Controller):
             if characters.Facing.DOWN in self.target_facings:
                 return characters.Action.TURN_RIGHT
             if characters.Facing.LEFT in self.target_facings:
-                return random.choice([characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT])
+                return random.choice(
+                    [characters.Action.TURN_LEFT, characters.Action.TURN_RIGHT]
+                )
         return None
 
     def praise(self, score: int) -> None:
